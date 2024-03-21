@@ -1,0 +1,10 @@
+includes:
+    - vendor/phpstan/phpstan-mockery/extension.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+    ignoreErrors:
+        - '#Function GuzzleHttp\\Psr7\\stream_for not found.#'
