@@ -2,16 +2,22 @@
 
 declare(strict_types=1);
 
-namespace Zing\Flysystem\Oss\Tests;
+namespace Zing\Flysystem\Tos\Tests;
 
-use League\Flysystem\AdapterInterface;
 use League\Flysystem\Config;
-use League\Flysystem\Filesystem;
-use OSS\Core\OssException;
-use OSS\OssClient;
-use Zing\Flysystem\Oss\OssAdapter;
-use Zing\Flysystem\Oss\Plugins\FileUrl;
-use Zing\Flysystem\Oss\Plugins\TemporaryUrl;
+use League\Flysystem\UnableToCheckDirectoryExistence;
+use League\Flysystem\UnableToCopyFile;
+use League\Flysystem\UnableToCreateDirectory;
+use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToReadFile;
+use League\Flysystem\UnableToRetrieveMetadata;
+use League\Flysystem\UnableToSetVisibility;
+use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\Visibility;
+use Tos\TosClient;
+use Zing\Flysystem\Tos\TosAdapter;
+use Zing\Flysystem\Tos\UnableToGetUrl;
 
 /**
  * @internal
@@ -25,191 +31,211 @@ final class InvalidAdapterTest extends TestCase
         'key' => 'aW52YWxpZC1rZXk=',
         'secret' => 'aW52YWxpZC1zZWNyZXQ=',
         'bucket' => 'test',
-        'endpoint' => 'oss-cn-shanghai.aliyuncs.com',
+        'endpoint' => 'tos-cn-shanghai.volces.com',
         'path_style' => '',
         'region' => '',
     ];
 
-    /**
-     * @var \Zing\Flysystem\Oss\OssAdapter
-     */
-    private $ossAdapter;
+    private TosAdapter $tosAdapter;
 
-    /**
-     * @var \OSS\OssClient
-     */
-    private $ossClient;
+    private TosClient $tosClient;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->ossClient = new OssClient(self::CONFIG['key'], self::CONFIG['secret'], self::CONFIG['endpoint']);
-        $this->ossAdapter = new OssAdapter($this->ossClient, self::CONFIG['bucket'], '', [
-            'endpoint' => self::CONFIG['endpoint'],
-        ]);
-    }
-
-    public function testUpdate(): void
-    {
-        self::assertFalse($this->ossAdapter->update('file.txt', 'test', new Config()));
-    }
-
-    public function testUpdateStream(): void
-    {
-        self::assertFalse(
-            $this->ossAdapter->updateStream('file.txt', $this->streamFor('test')->detach(), new Config())
+        $this->tosClient = new TosClient(
+            'cn-shanghai',
+            self::CONFIG['key'],
+            self::CONFIG['secret'],
+            self::CONFIG['endpoint']
         );
+        $this->tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '');
     }
 
     public function testCopy(): void
     {
-        self::assertFalse($this->ossAdapter->copy('file.txt', 'copy.txt'));
+        $this->expectException(UnableToCopyFile::class);
+        $this->tosAdapter->copy('file.txt', 'copy.txt', new Config());
     }
 
     public function testCreateDir(): void
     {
-        self::assertFalse($this->ossAdapter->createDir('path', new Config()));
+        $this->expectException(UnableToCreateDirectory::class);
+        $this->tosAdapter->createDirectory('path', new Config());
     }
 
     public function testSetVisibility(): void
     {
-        self::assertFalse($this->ossAdapter->setVisibility('file.txt', AdapterInterface::VISIBILITY_PUBLIC));
+        $this->expectException(UnableToSetVisibility::class);
+        $this->tosAdapter->setVisibility('file.txt', Visibility::PUBLIC);
     }
 
     public function testRename(): void
     {
-        self::assertFalse($this->ossAdapter->rename('from.txt', 'to.txt'));
+        $this->expectException(UnableToMoveFile::class);
+        $this->tosAdapter->move('from.txt', 'to.txt', new Config());
     }
 
     public function testDeleteDir(): void
     {
-        $this->expectException(OssException::class);
-        self::assertFalse($this->ossAdapter->deleteDir('path'));
+        $this->expectException(\Tos\Exception\TosServerException::class);
+        $this->tosAdapter->deleteDirectory('path');
     }
 
     public function testWriteStream(): void
     {
-        self::assertFalse($this->ossAdapter->writeStream('file.txt', $this->streamFor('test')->detach(), new Config()));
+        $this->expectException(UnableToWriteFile::class);
+        $this->tosAdapter->writeStream('file.txt', $this->streamForResource('test'), new Config());
     }
 
     public function testDelete(): void
     {
-        self::assertFalse($this->ossAdapter->delete('file.txt'));
+        $this->expectException(UnableToDeleteFile::class);
+        $this->tosAdapter->delete('file.txt');
     }
 
     public function testWrite(): void
     {
-        self::assertFalse($this->ossAdapter->write('file.txt', 'test', new Config()));
+        $this->expectException(UnableToWriteFile::class);
+        $this->tosAdapter->write('file.txt', 'test', new Config());
     }
 
     public function testRead(): void
     {
-        self::assertFalse($this->ossAdapter->read('file.txt'));
+        $this->expectException(UnableToReadFile::class);
+        $this->tosAdapter->read('file.txt');
     }
 
     public function testReadStream(): void
     {
-        self::assertFalse($this->ossAdapter->readStream('file.txt'));
+        $this->expectException(UnableToReadFile::class);
+        $this->tosAdapter->readStream('file.txt');
     }
 
     public function testGetVisibility(): void
     {
-        self::assertFalse($this->ossAdapter->getVisibility('file.txt'));
-    }
-
-    public function testGetMetadata(): void
-    {
-        self::assertFalse($this->ossAdapter->getMetadata('file.txt'));
+        $this->expectException(UnableToRetrieveMetadata::class);
+        $this->tosAdapter->visibility('file.txt')
+            ->visibility();
     }
 
     public function testListContents(): void
     {
-        $this->expectException(OssException::class);
-        self::assertEmpty($this->ossAdapter->listContents());
+        $this->expectException(\Tos\Exception\TosServerException::class);
+        $this->assertEmpty(iterator_to_array($this->tosAdapter->listContents('/', false)));
     }
 
     public function testGetSize(): void
     {
-        self::assertFalse($this->ossAdapter->getSize('file.txt'));
+        $this->expectException(UnableToRetrieveMetadata::class);
+        $this->tosAdapter->fileSize('file.txt')
+            ->fileSize();
     }
 
     public function testGetTimestamp(): void
     {
-        self::assertFalse($this->ossAdapter->getTimestamp('file.txt'));
+        $this->expectException(UnableToRetrieveMetadata::class);
+        $this->tosAdapter->lastModified('file.txt')
+            ->lastModified();
     }
 
     public function testGetMimetype(): void
     {
-        self::assertFalse($this->ossAdapter->getMimetype('file.txt'));
+        $this->expectException(UnableToRetrieveMetadata::class);
+        $this->tosAdapter->mimeType('file.txt')
+            ->mimeType();
     }
 
     public function testHas(): void
     {
-        self::assertFalse($this->ossAdapter->has('file.txt'));
+        $this->assertFalse($this->tosAdapter->fileExists('file.txt'));
     }
 
-    public function testGetUrl(): void
+    public function testBucket(): void
     {
-        self::assertSame('https://test.oss-cn-shanghai.aliyuncs.com/file.txt', $this->ossAdapter->getUrl('file.txt'));
-    }
-
-    public function testSignUrl(): void
-    {
-        $this->ossAdapter->setBucket('');
-        self::assertFalse($this->ossAdapter->signUrl('file.txt', 10, []));
-    }
-
-    public function testGetTemporaryUrl(): void
-    {
-        $this->ossAdapter->setBucket('');
-        self::assertFalse($this->ossAdapter->getTemporaryUrl('file.txt', 10, []));
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'http://tos.cdn.com',
+        ]);
+        $this->assertSame('test', $tosAdapter->getBucket());
     }
 
     public function testSetBucket(): void
     {
-        self::assertSame('test', $this->ossAdapter->getBucket());
-        $this->ossAdapter->setBucket('bucket');
-        self::assertSame('bucket', $this->ossAdapter->getBucket());
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'http://tos.cdn.com',
+        ]);
+        $tosAdapter->setBucket('new-bucket');
+        $this->assertSame('new-bucket', $tosAdapter->getBucket());
+    }
+
+    public function testGetUrl(): void
+    {
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'http://tos.cdn.com',
+        ]);
+        $this->assertSame('http://test.tos.cdn.com/test', $tosAdapter->getUrl('test'));
     }
 
     public function testGetClient(): void
     {
-        self::assertInstanceOf(OssClient::class, $this->ossAdapter->getClient());
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'http://tos.cdn.com',
+        ]);
+        $this->assertSame($this->tosClient, $tosAdapter->getClient());
+        $this->assertSame($this->tosClient, $tosAdapter->kernel());
+    }
+
+    public function testGetUrlWithoutSchema(): void
+    {
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'tos.cdn.com',
+        ]);
+        $this->assertSame('https://test.tos.cdn.com/test', $tosAdapter->getUrl('test'));
+    }
+
+    public function testGetUrlWithoutEndpoint(): void
+    {
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '');
+        $this->expectException(UnableToGetUrl::class);
+        $this->expectExceptionMessage('Unable to get url with option endpoint missing.');
+        $tosAdapter->getUrl('test');
     }
 
     public function testGetUrlWithUrl(): void
     {
-        $client = \Mockery::mock(OssClient::class);
-        $ossAdapter = new OssAdapter($client, '', '', [
-            'endpoint' => '',
-            'url' => 'https://oss.cdn.com',
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'https://tos.cdn.com',
+            'url' => 'https://tos.cdn.com',
         ]);
-        $filesystem = new Filesystem($ossAdapter);
-        $filesystem->addPlugin(new FileUrl());
-        self::assertSame('https://oss.cdn.com/test', $filesystem->getUrl('test'));
+        $this->assertSame('https://tos.cdn.com/test', $tosAdapter->getUrl('test'));
     }
 
     public function testGetUrlWithBucketEndpoint(): void
     {
-        $client = \Mockery::mock(OssClient::class);
-        $ossAdapter = new OssAdapter($client, '', '', [
-            'endpoint' => 'https://oss.cdn.com',
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'https://tos.cdn.com',
             'bucket_endpoint' => true,
         ]);
-        $filesystem = new Filesystem($ossAdapter);
-        $filesystem->addPlugin(new FileUrl());
-        self::assertSame('https://oss.cdn.com/test', $filesystem->getUrl('test'));
+        $this->assertSame('https://tos.cdn.com/test', $tosAdapter->getUrl('test'));
     }
 
     public function testGetTemporaryUrlWithUrl(): void
     {
-        $ossAdapter = new OssAdapter($this->ossClient, 'test', '', [
-            'endpoint' => 'https://oss.cdn.com',
-            'temporary_url' => 'https://oss.cdn.com',
+        $tosAdapter = new TosAdapter($this->tosClient, self::CONFIG['bucket'], '', null, null, [
+            'endpoint' => 'https://tos.cdn.com',
+            'temporary_url' => 'https://tos.cdn.com',
         ]);
-        $filesystem = new Filesystem($ossAdapter);
-        $filesystem->addPlugin(new TemporaryUrl());
-        self::assertStringStartsWith('https://oss.cdn.com/test', (string) $filesystem->getTemporaryUrl('test', 10));
+        $this->assertStringStartsWith('https://tos.cdn.com/test', $tosAdapter->getTemporaryUrl('test', 10));
+    }
+
+    public function testDirectoryExists(): void
+    {
+        if (! class_exists(UnableToCheckDirectoryExistence::class)) {
+            $this->markTestSkipped('Require League Flysystem v3');
+        }
+
+        $this->expectException(UnableToCheckDirectoryExistence::class);
+        $this->tosAdapter->directoryExists('path');
     }
 }
