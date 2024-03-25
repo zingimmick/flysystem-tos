@@ -83,7 +83,7 @@ final class MockAdapterTest extends TestCase
                 }
 
                 $acl = null;
-                if ($visibility !== null && $visibility !== '' && $visibility !== '0') {
+                if ($visibility !== null && $visibility !== '') {
                     $acl = $visibility === Visibility::PUBLIC ? Enum::ACLPublicRead : Enum::ACLPrivate;
                 }
 

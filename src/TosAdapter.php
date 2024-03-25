@@ -644,10 +644,13 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
         $expires = $expiration instanceof \DateTimeInterface ? $expiration->getTimestamp() - time() : $expiration;
         $preSignedURLInput = new PreSignedURLInput(
             $method,
-            $this->bucket,
+            empty($this->options['temporary_url']) ? $this->bucket : '',
             $this->pathPrefixer->prefixPath($path),
             $expires
         );
+        if (! empty($this->options['temporary_url'])) {
+            $preSignedURLInput->setAlternativeEndpoint($this->options['temporary_url']);
+        }
         $preSignedURLInput->setQuery($options);
 
         return $this->tosClient->preSignedURL($preSignedURLInput)->getSignedUrl();
