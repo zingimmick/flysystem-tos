@@ -6,5 +6,8 @@ parameters:
     paths:
         - src
         - tests
+    treatPhpDocTypesAsCertain: false
     ignoreErrors:
-        - '#Function GuzzleHttp\\Psr7\\stream_for not found.#'
+        - '#Used function GuzzleHttp\\Psr7\\stream_for not found.#'
+        - '#Cannot cast mixed to *.#'
+        - '#Parameter \#1 \$query of method Tos\\Model\\PreSignedURLInput::setQuery\(\) expects array<string>, (.*?) given.#'

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Zing\Flysystem\Tos;
 
-class UnableToGetUrl extends \RuntimeException
+use League\Flysystem\FilesystemException;
+
+class UnableToGetUrl extends \RuntimeException implements FilesystemException
 {
     public static function missingOption(string $option): self
     {

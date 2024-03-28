@@ -5,19 +5,41 @@ declare(strict_types=1);
 namespace Zing\Flysystem\Tos;
 
 use GuzzleHttp\Psr7\Uri;
-use League\Flysystem\Adapter\AbstractAdapter;
-use League\Flysystem\AdapterInterface;
+use League\Flysystem\ChecksumAlgoIsNotSupported;
+use League\Flysystem\ChecksumProvider;
 use League\Flysystem\Config;
-use League\Flysystem\Util;
+use League\Flysystem\DirectoryAttributes;
+use League\Flysystem\FileAttributes;
+use League\Flysystem\FilesystemAdapter;
+use League\Flysystem\FilesystemOperationFailed;
+use League\Flysystem\PathPrefixer;
+use League\Flysystem\StorageAttributes;
+use League\Flysystem\UnableToCheckDirectoryExistence;
+use League\Flysystem\UnableToCopyFile;
+use League\Flysystem\UnableToCreateDirectory;
+use League\Flysystem\UnableToDeleteDirectory;
+use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToGeneratePublicUrl;
+use League\Flysystem\UnableToGenerateTemporaryUrl;
+use League\Flysystem\UnableToListContents;
+use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToProvideChecksum;
+use League\Flysystem\UnableToReadFile;
+use League\Flysystem\UnableToRetrieveMetadata;
+use League\Flysystem\UnableToSetVisibility;
+use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
+use League\Flysystem\UrlGeneration\TemporaryUrlGenerator;
+use League\Flysystem\Visibility;
+use League\MimeTypeDetection\FinfoMimeTypeDetector;
+use League\MimeTypeDetection\MimeTypeDetector;
 use Psr\Http\Message\UriInterface;
 use Tos\Exception\TosServerException;
 use Tos\Model\Constant;
 use Tos\Model\CopyObjectInput;
 use Tos\Model\DeleteMultiObjectsInput;
 use Tos\Model\DeleteObjectInput;
-use Tos\Model\Enum;
 use Tos\Model\GetObjectACLInput;
-use Tos\Model\GetObjectACLOutput;
 use Tos\Model\GetObjectInput;
 use Tos\Model\HeadObjectInput;
 use Tos\Model\ListObjectsInput;
@@ -27,8 +49,13 @@ use Tos\Model\PutObjectACLInput;
 use Tos\Model\PutObjectInput;
 use Tos\TosClient;
 
-class TosAdapter extends AbstractAdapter
+class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvider, TemporaryUrlGenerator
 {
+    /**
+     * @var string[]
+     */
+    private const EXTRA_METADATA_FIELDS = [Constant::HeaderStorageClass, Constant::HeaderETag];
+
     /**
      * @var string
      */
@@ -44,30 +71,29 @@ class TosAdapter extends AbstractAdapter
      */
     private const AVAILABLE_OPTIONS = [Constant::HeaderAcl, Constant::HeaderContentType, Constant::HeaderExpires];
 
-    /**
-     * @var string
-     */
-    protected $bucket;
+    private PathPrefixer $pathPrefixer;
 
-    /**
-     * @var array{url?: string, temporary_url?: string, endpoint?: string, bucket_endpoint?: bool}
-     */
-    protected $options = [];
+    private PortableVisibilityConverter|VisibilityConverter $visibilityConverter;
 
-    /**
-     * @var \TOS\TosClient
-     */
-    protected $client;
+    private FinfoMimeTypeDetector|MimeTypeDetector $mimeTypeDetector;
 
     /**
      * @param array{url?: string, temporary_url?: string, endpoint?: string, bucket_endpoint?: bool} $options
      */
-    public function __construct(TosClient $client, string $bucket, string $prefix = '', array $options = [])
-    {
-        $this->client = $client;
-        $this->bucket = $bucket;
-        $this->setPathPrefix($prefix);
-        $this->options = $options;
+    public function __construct(
+        protected TosClient $tosClient,
+        protected string $bucket,
+        string $prefix = '',
+        ?VisibilityConverter $visibility = null,
+        ?MimeTypeDetector $mimeTypeDetector = null,
+        /**
+         * @phpstan-var array{url?: string, temporary_url?: string, endpoint?: string, bucket_endpoint?: bool}
+         */
+        protected array $options = []
+    ) {
+        $this->pathPrefixer = new PathPrefixer($prefix);
+        $this->visibilityConverter = $visibility instanceof VisibilityConverter ? $visibility : new PortableVisibilityConverter();
+        $this->mimeTypeDetector = $mimeTypeDetector instanceof MimeTypeDetector ? $mimeTypeDetector : new FinfoMimeTypeDetector();
     }
 
     public function getBucket(): string
@@ -75,14 +101,14 @@ class TosAdapter extends AbstractAdapter
         return $this->bucket;
     }
 
-    public function setBucket(string $bucket): void
-    {
-        $this->bucket = $bucket;
-    }
-
     public function getClient(): TosClient
     {
-        return $this->client;
+        return $this->tosClient;
+    }
+
+    public function write(string $path, string $contents, Config $config): void
+    {
+        $this->upload($path, $contents, $config);
     }
 
     public function kernel(): TosClient
@@ -90,221 +116,292 @@ class TosAdapter extends AbstractAdapter
         return $this->getClient();
     }
 
-    public function write($path, $contents, Config $config): bool
+    public function setBucket(string $bucket): void
     {
-        return $this->upload($path, $contents, $config);
+        $this->bucket = $bucket;
     }
 
     /**
-     * @param mixed $path
-     * @param resource $resource
+     * @param resource $contents
      */
-    public function writeStream($path, $resource, Config $config): bool
+    public function writeStream(string $path, $contents, Config $config): void
     {
-        return $this->upload($path, $resource, $config);
+        $this->upload($path, $contents, $config);
     }
 
-    private function upload(string $path, $contents, Config $config): bool
+    /**
+     * @param string|resource $contents
+     */
+    private function upload(string $path, $contents, Config $config): void
     {
         $options = $this->createOptionsFromConfig($config);
-        $putObjectInput = new PutObjectInput($this->bucket, $this->applyPathPrefix($path), $contents);
+        $putObjectInput = new PutObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path), $contents);
         if (! isset($options[Constant::HeaderAcl])) {
             /** @var string|null $visibility */
-            $visibility = $config->get('visibility');
+            $visibility = $config->get(Config::OPTION_VISIBILITY);
             if ($visibility !== null) {
-                $putObjectInput->setACL(
-                    $options[Constant::HeaderAcl] ?? ($visibility === self::VISIBILITY_PUBLIC ? Enum::ACLPublicRead : Enum::ACLPrivate)
-                );
+                $options[Constant::HeaderAcl] ??= $this->visibilityConverter->visibilityToAcl($visibility);
             }
         }
 
         $shouldDetermineMimetype = $contents !== '' && ! \array_key_exists(Constant::HeaderContentType, $options);
 
         if ($shouldDetermineMimetype) {
-            $mimeType = Util::guessMimeType($path, $contents);
-            if ($mimeType) {
-                $putObjectInput->setContentType($mimeType);
+            $mimeType = $this->mimeTypeDetector->detectMimeType($path, $contents);
+            if ($mimeType !== null && $mimeType !== '') {
+                $options[Constant::HeaderContentType] = $mimeType;
             }
         }
 
+        if (isset($options[Constant::HeaderAcl])) {
+            $putObjectInput->setACL((string) $options[Constant::HeaderAcl]);
+        }
+
         if (isset($options[Constant::HeaderContentType])) {
-            $putObjectInput->setContentType($options[Constant::HeaderContentType]);
+            $putObjectInput->setContentType((string) $options[Constant::HeaderContentType]);
         }
 
         if (isset($options[Constant::HeaderExpires])) {
-            $putObjectInput->setExpires($options[Constant::HeaderExpires]);
+            $putObjectInput->setExpires((int) $options[Constant::HeaderExpires]);
         }
 
         try {
-            $this->client->putObject($putObjectInput);
+            $this->tosClient->putObject($putObjectInput);
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToWriteFile::atLocation($path, $tosServerException->getMessage(), $tosServerException);
         }
-
-        return true;
     }
 
-    public function rename($path, $newpath): bool
-    {
-        if (! $this->copy($path, $newpath)) {
-            return false;
-        }
-
-        return $this->delete($path);
-    }
-
-    public function delete($path): bool
+    public function move(string $source, string $destination, Config $config): void
     {
         try {
-            $deleteObjectInput = new DeleteObjectInput($this->bucket, $this->applyPathPrefix($path));
-            $this->client->deleteObject($deleteObjectInput);
-        } catch (TosServerException $tosServerException) {
-            return false;
+            $this->copy($source, $destination, $config);
+            $this->delete($source);
+        } catch (FilesystemOperationFailed $filesystemOperationFailed) {
+            throw UnableToMoveFile::fromLocationTo($source, $destination, $filesystemOperationFailed);
         }
-
-        return ! $this->has($path);
     }
 
-    public function copy($path, $newpath): bool
+    public function copy(string $source, string $destination, Config $config): void
     {
+        try {
+            /** @var string|null $visibility */
+            $visibility = $config->get(Config::OPTION_VISIBILITY);
+            if ($visibility === null && $config->get('retain_visibility', true)) {
+                $visibility = $this->visibility($source)
+                    ->visibility();
+            }
+        } catch (FilesystemOperationFailed $filesystemOperationFailed) {
+            throw UnableToCopyFile::fromLocationTo($source, $destination, $filesystemOperationFailed);
+        }
+
+        $config = $config->withDefaults([
+            Config::OPTION_VISIBILITY => $visibility ?: Visibility::PRIVATE,
+        ]);
+
         try {
             $copyObjectInput = new CopyObjectInput(
                 $this->bucket,
-                $this->applyPathPrefix($newpath),
+                $this->pathPrefixer->prefixPath($destination),
                 $this->bucket,
-                $this->applyPathPrefix($path)
+                $this->pathPrefixer->prefixPath($source)
             );
-            $this->client->copyObject($copyObjectInput);
+            $copyObjectInput->setACL(
+                $this->visibilityConverter->visibilityToAcl((string) $config->get(Config::OPTION_VISIBILITY))
+            );
+            $this->tosClient->copyObject($copyObjectInput);
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToCopyFile::fromLocationTo($source, $destination, $tosServerException);
         }
-
-        return true;
     }
 
-    /**
-     * @param mixed $path
-     * @param mixed $visibility
-     *
-     * @return array|false
-     */
-    public function setVisibility($path, $visibility)
+    public function delete(string $path): void
+    {
+        try {
+            $deleteObjectInput = new DeleteObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path));
+            $this->tosClient->deleteObject($deleteObjectInput);
+        } catch (TosServerException $tosServerException) {
+            throw UnableToDeleteFile::atLocation($path, $tosServerException->getMessage(), $tosServerException);
+        }
+    }
+
+    public function deleteDirectory(string $path): void
+    {
+        $result = $this->listDirObjects($path, true);
+        $keys = array_column($result['objects'], 'key');
+        if ($keys === []) {
+            return;
+        }
+
+        try {
+            foreach (array_chunk($keys, 1000) as $items) {
+                $input = new DeleteMultiObjectsInput($this->bucket, array_map(
+                    static fn ($key): ObjectTobeDeleted => new ObjectTobeDeleted($key),
+                    $items
+                ));
+                $this->tosClient->deleteMultiObjects($input);
+            }
+        } catch (TosServerException $tosServerException) {
+            throw UnableToDeleteDirectory::atLocation($path, $tosServerException->getMessage(), $tosServerException);
+        }
+    }
+
+    public function createDirectory(string $path, Config $config): void
+    {
+        $defaultVisibility = $config->get('directory_visibility', $this->visibilityConverter->defaultForDirectories());
+        $config = $config->withDefaults([
+            'visibility' => $defaultVisibility,
+        ]);
+
+        try {
+            $this->write(trim($path, '/') . '/', '', $config);
+        } catch (FilesystemOperationFailed $filesystemOperationFailed) {
+            throw UnableToCreateDirectory::dueToFailure($path, $filesystemOperationFailed);
+        }
+    }
+
+    public function setVisibility(string $path, string $visibility): void
     {
         try {
             $putObjectACLInput = new PutObjectACLInput(
                 $this->bucket,
-                $this->applyPathPrefix($path),
-                $this->visibilityToAcl($visibility)
+                $this->pathPrefixer->prefixPath($path),
+                $this->visibilityConverter->visibilityToAcl($visibility)
             );
-            $this->client->putObjectAcl($putObjectACLInput);
+            $this->tosClient->putObjectACL($putObjectACLInput);
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToSetVisibility::atLocation($path, $tosServerException->getMessage(), $tosServerException);
         }
-
-        return [
-            'path' => $path,
-            'visibility' => $visibility,
-        ];
     }
 
-    /**
-     * @param mixed $path
-     *
-     * @return array|false
-     */
-    public function read($path)
+    public function visibility(string $path): FileAttributes
     {
         try {
-            $getObjectInput = new GetObjectInput($this->bucket, $this->applyPathPrefix($path));
-            $content = $this->client->getObject($getObjectInput)
-                ->getContent();
-            if ($content === null) {
-                return false;
+            $getObjectACLInput = new GetObjectACLInput($this->bucket, $this->pathPrefixer->prefixPath($path));
+            $result = $this->tosClient->getObjectACL($getObjectACLInput);
+            if ($result === null) {
+                throw UnableToRetrieveMetadata::visibility($path, 'The TOS server returns NULL.');
+            }
+        } catch (TosServerException $tosServerException) {
+            throw UnableToRetrieveMetadata::visibility($path, $tosServerException->getMessage(), $tosServerException);
+        }
+
+        $visibility = $this->visibilityConverter->aclToVisibility($result);
+
+        return new FileAttributes($path, null, $visibility);
+    }
+
+    public function fileExists(string $path): bool
+    {
+        try {
+            $headObjectInput = new HeadObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path));
+
+            return (bool) $this->tosClient->headObject($headObjectInput);
+        } catch (TosServerException) {
+            return false;
+        }
+    }
+
+    public function directoryExists(string $path): bool
+    {
+        try {
+            $prefix = $this->pathPrefixer->prefixDirectoryPath($path);
+            $listObjectsInput = new ListObjectsInput($this->bucket, 1, $prefix);
+            $listObjectsInput->setDelimiter('/');
+            $model = $this->tosClient->listObjects($listObjectsInput);
+            if ($model === null) {
+                throw new UnableToCheckDirectoryExistence(
+                    sprintf('Unable to check existence for: %s. The TOS server returns NULL.', $path)
+                );
             }
 
-            $contents = $content->getContents();
-
-            return [
-                'path' => $path,
-                'contents' => $contents,
-            ];
+            return $model->getContents() !== [];
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToCheckDirectoryExistence::forLocation($path, $tosServerException);
+        }
+    }
+
+    public function read(string $path): string
+    {
+        try {
+            $getObjectInput = new GetObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path));
+            $result = $this->tosClient->getObject($getObjectInput)
+                ->getContent();
+            if ($result === null) {
+                throw UnableToReadFile::fromLocation($path, 'The TOS server returns NULL.');
+            }
+
+            return $result->getContents();
+        } catch (TosServerException $tosServerException) {
+            throw UnableToReadFile::fromLocation($path, $tosServerException->getMessage(), $tosServerException);
         }
     }
 
     /**
-     * @param mixed $path
-     *
-     * @return array|false
+     * @return resource
      */
-    public function readStream($path)
+    public function readStream(string $path)
     {
         try {
-            $getObjectInput = new GetObjectInput($this->bucket, $this->applyPathPrefix($path));
+            $getObjectInput = new GetObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path));
             $getObjectInput->setStreamMode(false);
-            $content = $this->client->getObject($getObjectInput)
+            $result = $this->tosClient->getObject($getObjectInput)
                 ->getContent();
-            if ($content === null) {
-                return false;
+            if ($result === null) {
+                throw UnableToReadFile::fromLocation($path, 'The TOS server returns NULL.');
             }
 
-            $stream = $content->detach();
-
-            return [
-                'path' => $path,
-                'stream' => $stream,
-            ];
+            $stream = $result->detach();
+            if ($stream === null) {
+                throw UnableToReadFile::fromLocation($path, 'The TOS server returns NULL.');
+            }
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToReadFile::fromLocation($path, $tosServerException->getMessage(), $tosServerException);
         }
+
+        return $stream;
     }
 
     /**
-     * @param mixed $directory
-     * @param mixed $recursive
-     *
-     * @return array<int, mixed[]>
+     * @return \Traversable<\League\Flysystem\StorageAttributes>
      */
-    public function listContents($directory = '', $recursive = false): array
+    public function listContents(string $path, bool $deep): iterable
     {
-        $directory = rtrim($directory, '/');
-        $result = $this->listDirObjects($directory, $recursive);
-        $list = [];
+        $directory = rtrim($path, '/');
+        $result = $this->listDirObjects($directory, $deep);
+
         foreach ($result['objects'] as $files) {
-            $path = $this->removePathPrefix(rtrim((string) ($files['key'] ?? $files['prefix']), '/'));
+            $path = $this->pathPrefixer->stripDirectoryPrefix((string) ($files['key'] ?? $files['prefix']));
             if ($path === $directory) {
                 continue;
             }
 
-            $list[] = $this->mapObjectMetadata($files);
+            yield $this->mapObjectMetadata($files);
         }
 
         foreach ($result['prefix'] as $dir) {
-            $list[] = [
-                'type' => 'dir',
-                'path' => $this->removePathPrefix(rtrim($dir, '/')),
-            ];
+            yield new DirectoryAttributes($this->pathPrefixer->stripDirectoryPrefix($dir));
         }
-
-        return $list;
     }
 
     /**
-     * @param mixed $path
-     *
-     * @return array|false
+     * Get the metadata of a file.
      */
-    public function getMetadata($path)
+    private function getMetadata(string $path, string $type): FileAttributes
     {
         try {
-            $headObjectInput = new HeadObjectInput($this->bucket, $this->applyPathPrefix($path));
-            $metadata = $this->client->headObject($headObjectInput);
+            $headObjectInput = new HeadObjectInput($this->bucket, $this->pathPrefixer->prefixPath($path));
+            $metadata = $this->tosClient->headObject($headObjectInput);
         } catch (TosServerException $tosServerException) {
-            return false;
+            throw UnableToRetrieveMetadata::create(
+                $path,
+                $type,
+                $tosServerException->getMessage(),
+                $tosServerException
+            );
         }
 
-        return $this->mapObjectMetadata([
+        $attributes = $this->mapObjectMetadata([
             'key' => $headObjectInput->getKey(),
             'last-modified' => $metadata->getLastModified(),
             'content-type' => $metadata->getContentType(),
@@ -312,38 +409,99 @@ class TosAdapter extends AbstractAdapter
             Constant::HeaderETag => $metadata->getETag(),
             Constant::HeaderStorageClass => $metadata->getStorageClass(),
         ], $path);
+
+        if (! $attributes instanceof FileAttributes) {
+            throw UnableToRetrieveMetadata::create($path, $type);
+        }
+
+        return $attributes;
     }
 
-    private function mapObjectMetadata(array $metadata, ?string $path = null): array
+    /**
+     * @param array{key?: string, prefix?: string|null, content-length?: int, size?: int, last-modified?: int, content-type?: string} $metadata
+     */
+    private function mapObjectMetadata(array $metadata, ?string $path = null): StorageAttributes
     {
         if ($path === null) {
-            $path = $this->removePathPrefix((string) ($metadata['key'] ?? $metadata['prefix']));
+            $path = $this->pathPrefixer->stripPrefix($metadata['key'] ?? ($metadata['prefix'] ?? ''));
         }
 
-        if (substr($path, -1) === '/') {
-            return [
-                'type' => 'dir',
-                'path' => rtrim($path, '/'),
-            ];
+        if (str_ends_with($path, '/')) {
+            return new DirectoryAttributes(rtrim($path, '/'));
         }
 
-        return [
-            'type' => 'file',
-            'mimetype' => $metadata['content-type'] ?? null,
-            'path' => $path,
-            'timestamp' => $metadata['last-modified'] ?? null,
-            'size' => isset($metadata['content-length']) ? (int) $metadata['content-length'] : ($metadata['size'] ?? null),
-        ];
+        return new FileAttributes(
+            $path,
+            $metadata['content-length'] ?? $metadata['size'] ?? null,
+            null,
+            $metadata['last-modified'] ?? null,
+            $metadata['content-type'] ?? null,
+            $this->extractExtraMetadata($metadata)
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $metadata
+     *
+     * @return array<string,mixed>
+     */
+    private function extractExtraMetadata(array $metadata): array
+    {
+        $extracted = [];
+
+        foreach (self::EXTRA_METADATA_FIELDS as $field) {
+            if (! isset($metadata[$field])) {
+                continue;
+            }
+
+            if ($metadata[$field] === '') {
+                continue;
+            }
+
+            $extracted[$field] = $metadata[$field];
+        }
+
+        return $extracted;
+    }
+
+    public function fileSize(string $path): FileAttributes
+    {
+        $attributes = $this->getMetadata($path, FileAttributes::ATTRIBUTE_FILE_SIZE);
+        if ($attributes->fileSize() === null) {
+            throw UnableToRetrieveMetadata::fileSize($path);
+        }
+
+        return $attributes;
+    }
+
+    public function mimeType(string $path): FileAttributes
+    {
+        $attributes = $this->getMetadata($path, FileAttributes::ATTRIBUTE_MIME_TYPE);
+        if ($attributes->mimeType() === null) {
+            throw UnableToRetrieveMetadata::mimeType($path);
+        }
+
+        return $attributes;
+    }
+
+    public function lastModified(string $path): FileAttributes
+    {
+        $attributes = $this->getMetadata($path, FileAttributes::ATTRIBUTE_LAST_MODIFIED);
+        if ($attributes->lastModified() === null) {
+            throw UnableToRetrieveMetadata::lastModified($path);
+        }
+
+        return $attributes;
     }
 
     /**
      * File list core method.
      *
-     * @return array{prefix: array<string>, objects: array<array{key?: string, prefix: ?string, content-length?: string, size?: int, last-modified?: string, content-type?: string}>}
+     * @return array{prefix: array<string>, objects: array<array{key?: string, prefix: ?string, content-length?: int, size?: int, last-modified?: int, content-type?: string}>}
      */
     public function listDirObjects(string $dirname = '', bool $recursive = false): array
     {
-        $prefix = trim($this->applyPathPrefix($dirname), '/');
+        $prefix = trim($this->pathPrefixer->prefixPath($dirname), '/');
         $prefix = $prefix === '' ? '' : $prefix . '/';
 
         $nextMarker = '';
@@ -353,7 +511,13 @@ class TosAdapter extends AbstractAdapter
         while (true) {
             $input = new ListObjectsInput($this->bucket, self::MAX_KEYS, $prefix, $nextMarker);
             $input->setDelimiter($recursive ? '' : self::DELIMITER);
-            $model = $this->client->listObjects($input);
+            $model = $this->tosClient->listObjects($input);
+            if ($model === null) {
+                throw new UnableToListContents(sprintf("Unable to list contents for '%s', ", $prefix)
+                    . ($recursive ? 'deep' : 'shallow') . " listing\n\n"
+                    . 'Reason: The TOS server returns NULL.');
+            }
+
             $nextMarker = $model->getNextMarker();
             $objects = $model->getContents();
             $prefixes = $model->getCommonPrefixes();
@@ -369,47 +533,34 @@ class TosAdapter extends AbstractAdapter
     }
 
     /**
-     * @param array{prefix?: array<string>, objects?: array<array{key?: string, prefix: string|null, content-length?: string, size?: int, last-modified?: string, content-type?: string}>} $result
-     * @param array<\Tos\Model\ListedObject>|null $objects
+     * @param array{prefix?: array<string>, objects?: array<array{prefix: string, key: string, last-modified: int, size: int, ETag: string, x-tos-storage-class: string}>} $result
+     * @param array<\Tos\Model\ListedObject> $objects
      *
-     * @return array{prefix?: array<string>, objects: array<array{key?: string, prefix: string|null, content-length?: string, size?: int, last-modified?: string, content-type?: string}>}
+     * @return array{prefix?: array<string>, objects: array<array{prefix: string, key: string, last-modified: int, size: int, ETag: string, x-tos-storage-class: string}>}
      */
-    private function processObjects(array $result, ?array $objects, string $dirname): array
+    private function processObjects(array $result, array $objects, string $dirname): array
     {
-        $result['objects'] = [];
-        if ($objects !== null && $objects !== []) {
-            foreach ($objects as $object) {
-                $result['objects'][] = [
-                    'prefix' => $dirname,
-                    'key' => $object->getKey(),
-                    'last-modified' => $object->getLastModified(),
-                    'size' => $object->getSize(),
-                    Constant::HeaderETag => $object->getETag(),
-                    Constant::HeaderStorageClass => $object->getStorageClass(),
-                ];
-            }
-        } else {
-            $result['objects'] = [];
-        }
+        $result['objects'] = array_map(static fn ($object): array => [
+            'prefix' => $dirname,
+            'key' => $object->getKey(),
+            'last-modified' => $object->getLastModified(),
+            'size' => $object->getSize(),
+            Constant::HeaderETag => $object->getETag(),
+            Constant::HeaderStorageClass => $object->getStorageClass(),
+        ], $objects);
 
         return $result;
     }
 
     /**
-     * @param array{prefix?: array<string>, objects: array<array{key?: string, prefix: string|null, content-length?: string, size?: int, last-modified?: string, content-type?: string}>} $result
-     * @param array<\Tos\Model\ListedCommonPrefix>|null $prefixes
+     * @param array{prefix?: array<string>, objects: array<array{prefix: string, key: string, last-modified: int, size: int, ETag: string, x-tos-storage-class: string}>} $result
+     * @param array<\Tos\Model\ListedCommonPrefix> $prefixes
      *
-     * @return array{prefix: array<string>, objects: array<array{key?: string, prefix: string|null, content-length?: string, size?: int, last-modified?: string, content-type?: string}>}
+     * @return array{prefix: array<string>, objects: array<array{prefix: string, key: string, last-modified: int, size: int, ETag: string, x-tos-storage-class: string}>}
      */
-    private function processPrefixes(array $result, ?array $prefixes): array
+    private function processPrefixes(array $result, array $prefixes): array
     {
-        if ($prefixes !== null && $prefixes !== []) {
-            foreach ($prefixes as $prefix) {
-                $result['prefix'][] = $prefix->getPrefix();
-            }
-        } else {
-            $result['prefix'] = [];
-        }
+        $result['prefix'] = array_map(static fn ($prefix) => $prefix->getPrefix(), $prefixes);
 
         return $result;
     }
@@ -425,6 +576,12 @@ class TosAdapter extends AbstractAdapter
         $mimeType = $config->get('mimetype');
         if ($mimeType) {
             $options[Constant::HeaderContentType] = $mimeType;
+        }
+
+        /** @var string|null $visibility */
+        $visibility = $config->get(Config::OPTION_VISIBILITY);
+        if ($visibility) {
+            $options[Constant::HeaderAcl] = $this->visibilityConverter->visibilityToAcl($visibility);
         }
 
         foreach (self::AVAILABLE_OPTIONS as $option) {
@@ -444,10 +601,10 @@ class TosAdapter extends AbstractAdapter
     public function getUrl(string $path): string
     {
         if (isset($this->options['url'])) {
-            return $this->concatPathToUrl($this->options['url'], $this->applyPathPrefix($path));
+            return $this->concatPathToUrl($this->options['url'], $this->pathPrefixer->prefixPath($path));
         }
 
-        return $this->concatPathToUrl($this->normalizeHost(), $this->applyPathPrefix($path));
+        return $this->concatPathToUrl($this->normalizeHost(), $this->pathPrefixer->prefixPath($path));
     }
 
     protected function normalizeHost(): string
@@ -457,7 +614,7 @@ class TosAdapter extends AbstractAdapter
         }
 
         $endpoint = $this->options['endpoint'];
-        if (strpos($endpoint, 'http') !== 0) {
+        if (! str_starts_with($endpoint, 'http')) {
             $endpoint = 'https://' . $endpoint;
         }
 
@@ -476,54 +633,47 @@ class TosAdapter extends AbstractAdapter
     /**
      * Get a signed URL for the file at the given path.
      *
-     * @param \DateTimeInterface|int $expiration
      * @param array<string, mixed> $options
-     *
-     * @return string
      */
-    public function signUrl(string $path, $expiration, array $options = [], string $method = 'GET')
-    {
+    public function signUrl(
+        string $path,
+        \DateTimeInterface|int $expiration,
+        array $options = [],
+        string $method = 'GET'
+    ): string {
         $expires = $expiration instanceof \DateTimeInterface ? $expiration->getTimestamp() - time() : $expiration;
-
         $preSignedURLInput = new PreSignedURLInput(
             $method,
             ($this->options['bucket_endpoint'] ?? false) || ! empty($this->options['temporary_url']) ? '' : $this->bucket,
-            $this->applyPathPrefix($path),
+            $this->pathPrefixer->prefixPath($path),
             $expires
         );
-        $preSignedURLInput->setQuery($options);
         if ($this->options['bucket_endpoint'] ?? false) {
-            $preSignedURLInput->setAlternativeEndpoint($this->options['endpoint']);
+            $preSignedURLInput->setAlternativeEndpoint($this->options['endpoint'] ?? '');
         }
 
         if (! empty($this->options['temporary_url'])) {
             $preSignedURLInput->setAlternativeEndpoint($this->options['temporary_url']);
         }
 
-        try {
-            return $this->client->preSignedURL($preSignedURLInput)
-                ->getSignedUrl();
-        } catch (TosServerException $tosServerException) {
-            return false;
-        }
+        $preSignedURLInput->setQuery($options);
+
+        return $this->tosClient->preSignedURL($preSignedURLInput)
+            ->getSignedUrl();
     }
 
     /**
      * Get a temporary URL for the file at the given path.
      *
-     * @param \DateTimeInterface|int $expiration
      * @param array<string, mixed> $options
-     *
-     * @return string
      */
-    public function getTemporaryUrl(string $path, $expiration, array $options = [], string $method = 'GET')
-    {
-        $signedUrl = $this->signUrl($path, $expiration, $options, $method);
-        if ($signedUrl === false) {
-            return false;
-        }
-
-        $uri = new Uri($signedUrl);
+    public function getTemporaryUrl(
+        string $path,
+        \DateTimeInterface|int $expiration,
+        array $options = [],
+        string $method = 'GET'
+    ): string {
+        $uri = new Uri($this->signUrl($path, $expiration, $options, $method));
 
         if (isset($this->options['temporary_url'])) {
             $uri = $this->replaceBaseUrl($uri, $this->options['temporary_url']);
@@ -554,141 +704,62 @@ class TosAdapter extends AbstractAdapter
             ->withPort($parsed['port'] ?? null);
     }
 
-    public function update($path, $contents, Config $config): bool
+    public function publicUrl(string $path, Config $config): string
     {
-        return $this->upload($path, $contents, $config);
+        $location = $this->pathPrefixer->prefixPath($path);
+
+        try {
+            return $this->concatPathToUrl($this->normalizeHost(), $location);
+        } catch (\Throwable $throwable) {
+            throw UnableToGeneratePublicUrl::dueToError($path, $throwable);
+        }
     }
 
-    public function updateStream($path, $resource, Config $config): bool
+    public function checksum(string $path, Config $config): string
     {
-        return $this->upload($path, $resource, $config);
-    }
+        $algo = $config->get('checksum_algo', Constant::HeaderETag);
 
-    public function deleteDir($dirname): bool
-    {
-        $result = $this->listDirObjects($dirname, true);
-        $keys = array_column($result['objects'], 'key');
-        if ($keys === []) {
-            return true;
+        if ($algo !== Constant::HeaderETag) {
+            throw new ChecksumAlgoIsNotSupported();
         }
 
         try {
-            foreach (array_chunk($keys, 1000) as $items) {
-                $input = new DeleteMultiObjectsInput($this->bucket, array_map(
-                    static function ($key): ObjectTobeDeleted {
-                        return new ObjectTobeDeleted($key);
-                    },
-                    $items
-                ));
-                $this->client->deleteMultiObjects($input);
-            }
-        } catch (TosServerException $tosServerException) {
-            return false;
+            $metadata = $this->getMetadata($path, 'checksum')
+                ->extraMetadata();
+        } catch (UnableToRetrieveMetadata $unableToRetrieveMetadata) {
+            throw new UnableToProvideChecksum($unableToRetrieveMetadata->reason(), $path, $unableToRetrieveMetadata);
         }
 
-        return true;
+        if (! isset($metadata[Constant::HeaderETag])) {
+            throw new UnableToProvideChecksum('etag header not available.', $path);
+        }
+
+        return strtolower(trim($metadata[Constant::HeaderETag], '"'));
     }
 
-    public function createDir($dirname, Config $config): bool
+    public function temporaryUrl(string $path, \DateTimeInterface $expiresAt, Config $config): string
     {
-        return $this->upload(rtrim($dirname, '/') . '/', '', $config);
-    }
+        $preSignedURLInput = new PreSignedURLInput(
+            'GET',
+            ($this->options['bucket_endpoint'] ?? false) || ! empty($this->options['temporary_url']) ? '' : $this->bucket,
+            $this->pathPrefixer->prefixPath($path),
+            $expiresAt->getTimestamp() - time(),
+        );
+        if ($this->options['bucket_endpoint'] ?? false) {
+            $preSignedURLInput->setAlternativeEndpoint($this->options['endpoint'] ?? '');
+        }
 
-    public function has($path): bool
-    {
-        $location = $this->applyPathPrefix($path);
+        if (! empty($this->options['temporary_url'])) {
+            $preSignedURLInput->setAlternativeEndpoint($this->options['temporary_url']);
+        }
+
+        $preSignedURLInput->setQuery((array) $config->get('gcp_signing_options', []));
 
         try {
-            $headObjectInput = new HeadObjectInput($this->bucket, $location);
-            if ($this->client->headObject($headObjectInput)) {
-                return true;
-            }
-
-            $headObjectInput->setKey(rtrim($location, '/') . '/');
-
-            return (bool) $this->client->headObject($headObjectInput);
-        } catch (TosServerException $tosServerException) {
-            return false;
+            return $this->tosClient->preSignedURL($preSignedURLInput)
+                ->getSignedUrl();
+        } catch (\Throwable $throwable) {
+            throw UnableToGenerateTemporaryUrl::dueToError($path, $throwable);
         }
-    }
-
-    /**
-     * @param mixed $path
-     *
-     * @return array|false
-     */
-    public function getSize($path)
-    {
-        return $this->getMetadata($path);
-    }
-
-    /**
-     * @param mixed $path
-     *
-     * @return array|false
-     */
-    public function getMimetype($path)
-    {
-        return $this->getMetadata($path);
-    }
-
-    /**
-     * @param mixed $path
-     *
-     * @return array|false
-     */
-    public function getTimestamp($path)
-    {
-        return $this->getMetadata($path);
-    }
-
-    /**
-     * @param mixed $path
-     *
-     * @return false|string[]
-     */
-    public function getVisibility($path)
-    {
-        try {
-            $getObjectACLInput = new GetObjectACLInput($this->bucket, $this->applyPathPrefix($path));
-            $result = $this->client->getObjectAcl($getObjectACLInput);
-        } catch (TosServerException $tosServerException) {
-            return false;
-        }
-
-        return [
-            'visibility' => $this->aclToVisibility($result),
-        ];
-    }
-
-    public function visibilityToAcl(string $visibility): string
-    {
-        if ($visibility === AdapterInterface::VISIBILITY_PUBLIC) {
-            return Enum::ACLPublicRead;
-        }
-
-        return Enum::ACLPrivate;
-    }
-
-    public function aclToVisibility(GetObjectACLOutput $model): string
-    {
-        foreach ($model->getGrants() as $grant) {
-            $grantee = $grant->getGrantee();
-            if ($grantee === null) {
-                continue;
-            }
-
-            if (! \in_array($grantee->getCanned(), [Enum::CannedAuthenticatedUsers, Enum::CannedAllUsers], true)) {
-                continue;
-            }
-
-            if ($grant->getPermission() !== Enum::PermissionRead) {
-                continue;
-            }
-
-            return AdapterInterface::VISIBILITY_PUBLIC;
-        }
-
-        return AdapterInterface::VISIBILITY_PRIVATE;
     }
 }
