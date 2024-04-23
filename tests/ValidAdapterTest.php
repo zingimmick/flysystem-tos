@@ -303,45 +303,45 @@ final class ValidAdapterTest extends TestCase
     {
         $adapter = $this->tosAdapter;
         $adapter->write(
-            'source.txt',
+            'fixture/source.txt',
             'contents to be copied',
             new Config([
                 Config::OPTION_VISIBILITY => Visibility::PUBLIC,
             ])
         );
-        $adapter->move('source.txt', 'destination.txt', new Config([
+        $adapter->move('fixture/source.txt', 'fixture/destination.txt', new Config([
             Config::OPTION_VISIBILITY => Visibility::PRIVATE,
         ]));
         $this->assertFalse(
-            $adapter->fileExists('source.txt'),
+            $adapter->fileExists('fixture/source.txt'),
             'After moving a file should no longer exist in the original location.'
         );
         $this->assertTrue(
-            $adapter->fileExists('destination.txt'),
+            $adapter->fileExists('fixture/destination.txt'),
             'After moving, a file should be present at the new location.'
         );
-        $this->assertSame(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
-        $this->assertSame('contents to be copied', $adapter->read('destination.txt'));
+        $this->assertSame(Visibility::PRIVATE, $adapter->visibility('fixture/destination.txt')->visibility());
+        $this->assertSame('contents to be copied', $adapter->read('fixture/destination.txt'));
     }
 
     public function testCopyingAFileWithVisibility(): void
     {
         $adapter = $this->tosAdapter;
         $adapter->write(
-            'source.txt',
+            'fixture/source.txt',
             'contents to be copied',
             new Config([
                 Config::OPTION_VISIBILITY => Visibility::PUBLIC,
             ])
         );
 
-        $adapter->copy('source.txt', 'destination.txt', new Config([
+        $adapter->copy('fixture/source.txt', 'fixture/destination.txt', new Config([
             Config::OPTION_VISIBILITY => Visibility::PRIVATE,
         ]));
 
-        $this->assertTrue($adapter->fileExists('source.txt'));
-        $this->assertTrue($adapter->fileExists('destination.txt'));
-        $this->assertSame(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
-        $this->assertSame('contents to be copied', $adapter->read('destination.txt'));
+        $this->assertTrue($adapter->fileExists('fixture/source.txt'));
+        $this->assertTrue($adapter->fileExists('fixture/destination.txt'));
+        $this->assertSame(Visibility::PRIVATE, $adapter->visibility('fixture/destination.txt')->visibility());
+        $this->assertSame('contents to be copied', $adapter->read('fixture/destination.txt'));
     }
 }
