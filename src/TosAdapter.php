@@ -311,7 +311,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
             $model = $this->tosClient->listObjects($listObjectsInput);
             if ($model === null) {
                 throw new UnableToCheckDirectoryExistence(
-                    sprintf('Unable to check existence for: %s. The TOS server returns NULL.', $path)
+                    \sprintf('Unable to check existence for: %s. The TOS server returns NULL.', $path)
                 );
             }
 
@@ -513,7 +513,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
             $input->setDelimiter($recursive ? '' : self::DELIMITER);
             $model = $this->tosClient->listObjects($input);
             if ($model === null) {
-                throw new UnableToListContents(sprintf("Unable to list contents for '%s', ", $prefix)
+                throw new UnableToListContents(\sprintf("Unable to list contents for '%s', ", $prefix)
                     . ($recursive ? 'deep' : 'shallow') . " listing\n\n"
                     . 'Reason: The TOS server returns NULL.');
             }
@@ -625,7 +625,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
             $domain = $this->bucket . '.' . $domain;
         }
 
-        $domain = sprintf('%s://%s', $url['scheme'], $domain);
+        $domain = \sprintf('%s://%s', $url['scheme'], $domain);
 
         return rtrim($domain, '/') . '/';
     }
