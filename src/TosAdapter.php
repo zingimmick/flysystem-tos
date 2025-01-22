@@ -732,6 +732,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
         }
 
         try {
+            /** @var array{ETag?: string} $metadata */
             $metadata = $this->getMetadata($path, 'checksum')
                 ->extraMetadata();
         } catch (UnableToRetrieveMetadata $unableToRetrieveMetadata) {
