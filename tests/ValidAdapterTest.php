@@ -13,10 +13,7 @@ use Tos\Model\Constant;
 use Tos\TosClient;
 use Zing\Flysystem\Tos\TosAdapter;
 
-/**
- * @internal
- */
-final class ValidAdapterTest extends TestCase
+class ValidAdapterTest extends TestCase
 {
     private TosAdapter $tosAdapter;
 
@@ -30,14 +27,19 @@ final class ValidAdapterTest extends TestCase
         return (string) getenv('TOS_SECRET') ?: '';
     }
 
-    private function getBucket(): string
+    protected function getBucket(): string
     {
         return (string) getenv('TOS_BUCKET') ?: '';
     }
 
-    private function getEndpoint(): string
+    protected function getEndpoint(): string
     {
         return (string) getenv('TOS_ENDPOINT') ?: 'tos-cn-shanghai.volces.com';
+    }
+
+    protected function isBucketEndpoint(): bool
+    {
+        return false;
     }
 
     protected function setUp(): void
@@ -49,20 +51,14 @@ final class ValidAdapterTest extends TestCase
         parent::setUp();
 
         $config = [
-            'key' => $this->getKey(),
-            'secret' => $this->getSecret(),
-            'bucket' => $this->getBucket(),
+            'region' => 'cn-shanghai',
+            'ak' => $this->getKey(),
+            'sk' => $this->getSecret(),
             'endpoint' => $this->getEndpoint(),
-            'path_style' => '',
-            'region' => '',
+            'isCustomDomain' => $this->isBucketEndpoint(),
         ];
 
-        $this->tosAdapter = new TosAdapter(new TosClient(
-            'cn-shanghai',
-            $config['key'],
-            $config['secret'],
-            $config['endpoint']
-        ), $this->getBucket(), '');
+        $this->tosAdapter = new TosAdapter(new TosClient($config), $this->getBucket(), '');
         $this->tosAdapter->write('fixture/read.txt', 'read-test', new Config([
             Config::OPTION_VISIBILITY => Visibility::PUBLIC,
         ]));

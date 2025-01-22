@@ -17,6 +17,7 @@ return static function (ECSConfig $ecsConfig): void {
         \PhpCsFixer\Fixer\PhpUnit\PhpUnitTestAnnotationFixer::class => [__DIR__ . '/tests/TosAdapterTest.php'],
         // bug
         ReturnAssignmentFixer::class,
+        \PhpCsFixer\Fixer\PhpUnit\PhpUnitInternalClassFixer::class => [__DIR__ . '/tests/ValidAdapterTest.php'],
     ]);
     $ecsConfig->paths([__DIR__ . '/src', __DIR__ . '/tests', __DIR__ . '/ecs.php', __DIR__ . '/rector.php']);
 };
