@@ -493,7 +493,6 @@ final class MockAdapterTest extends TestCase
         $this->tosAdapter->deleteDirectory('path');
         $this->expectException(UnableToDeleteDirectory::class);
         $this->tosAdapter->deleteDirectory('path');
-        $this->assertTrue(true);
     }
 
     public function testWriteStream(): void

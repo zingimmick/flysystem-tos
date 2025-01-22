@@ -11,3 +11,4 @@ parameters:
         - '#Used function GuzzleHttp\\Psr7\\stream_for not found.#'
         - '#Cannot cast mixed to *.#'
         - '#Parameter \#1 \$query of method Tos\\Model\\PreSignedURLInput::setQuery\(\) expects array<string>, (.*?) given.#'
+        - '#Method Zing\\Flysystem\\Tos\\Tests\\TestCase::streamFor\(\) should return Psr\\Http\\Message\\StreamInterface but returns mixed.#'
