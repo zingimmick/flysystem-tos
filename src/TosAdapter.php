@@ -51,24 +51,12 @@ use Tos\TosClient;
 
 class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvider, TemporaryUrlGenerator
 {
-    /**
-     * @var string[]
-     */
     private const EXTRA_METADATA_FIELDS = [Constant::HeaderStorageClass, Constant::HeaderETag];
 
-    /**
-     * @var string
-     */
     private const DELIMITER = '/';
 
-    /**
-     * @var int
-     */
     private const MAX_KEYS = 1000;
 
-    /**
-     * @var string[]
-     */
     private const AVAILABLE_OPTIONS = [Constant::HeaderAcl, Constant::HeaderContentType, Constant::HeaderExpires];
 
     private PathPrefixer $pathPrefixer;
