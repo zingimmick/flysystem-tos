@@ -9,6 +9,7 @@ use League\Flysystem\DirectoryAttributes;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\StorageAttributes;
 use League\Flysystem\Visibility;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tos\Model\Constant;
 use Tos\TosClient;
 use Zing\Flysystem\Tos\TosAdapter;
@@ -147,6 +148,7 @@ class ValidAdapterTest extends TestCase
     /**
      * @dataProvider provideVisibilities
      */
+    #[DataProvider('provideVisibilities')]
     public function testWriteStreamWithVisibility(string $visibility): void
     {
         $this->tosAdapter->writeStream('fixture/file.txt', $this->streamForResource('write'), new Config([
@@ -275,6 +277,7 @@ class ValidAdapterTest extends TestCase
     /**
      * @dataProvider provideVisibilities
      */
+    #[DataProvider('provideVisibilities')]
     public function testCopyWithVisibility(string $visibility): void
     {
         $this->tosAdapter->write('fixture/private.txt', 'private', new Config([
