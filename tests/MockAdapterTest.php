@@ -12,6 +12,7 @@ use League\Flysystem\UnableToCopyFile;
 use League\Flysystem\UnableToDeleteDirectory;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\Visibility;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tos\Helper\StreamReader;
 use Tos\Model\Constant;
 use Tos\Model\CopyObjectInput;
@@ -527,6 +528,7 @@ final class MockAdapterTest extends TestCase
     /**
      * @dataProvider provideWriteStreamWithVisibilityCases
      */
+    #[DataProvider('provideWriteStreamWithVisibilityCases')]
     public function testWriteStreamWithVisibility(string $visibility): void
     {
         $contents = $this->streamForResource('write');
