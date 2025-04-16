@@ -504,20 +504,10 @@ final class MockAdapterTest extends TestCase
         $this->assertSame('write', $this->tosAdapter->read('file.txt'));
     }
 
-    /**
-     * @return \Iterator<string[]>
-     */
-    public static function provideWriteStreamWithVisibilityCases(): \Iterator
-    {
-        yield [Visibility::PUBLIC];
-
-        yield [Visibility::PRIVATE];
-    }
-
     private function mockGetVisibility(string $path, string $visibility): void
     {
         $output = \Mockery::mock(GetObjectACLOutput::class);
-        $grantee = (new Grantee());
+        $grantee = new Grantee();
         $grantee->setCanned(Enum::CannedAllUsers);
         $output->shouldReceive('getGrants')
             ->andReturn($visibility === Visibility::PUBLIC ? [new Grant($grantee, Enum::PermissionRead)] : []);
@@ -546,6 +536,16 @@ final class MockAdapterTest extends TestCase
         ]));
         $this->mockGetVisibility('file.txt', $visibility);
         $this->assertSame($visibility, $this->tosAdapter->visibility('file.txt')['visibility']);
+    }
+
+    /**
+     * @return \Iterator<string[]>
+     */
+    public static function provideWriteStreamWithVisibilityCases(): \Iterator
+    {
+        yield [Visibility::PUBLIC];
+
+        yield [Visibility::PRIVATE];
     }
 
     public function testWriteStreamWithExpires(): void
