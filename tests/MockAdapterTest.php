@@ -47,7 +47,7 @@ final class MockAdapterTest extends TestCase
      */
     private $client;
 
-    private TosAdapter $tosAdapter;
+    private  TosAdapter $tosAdapter;
 
     protected function setUp(): void
     {
