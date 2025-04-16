@@ -10,14 +10,8 @@ use Tos\Model\GetObjectACLOutput;
 
 class PortableVisibilityConverter implements VisibilityConverter
 {
-    /**
-     * @var string
-     */
     private const PUBLIC_ACL = Enum::ACLPublicRead;
 
-    /**
-     * @var string
-     */
     private const PRIVATE_ACL = Enum::ACLPrivate;
 
     public function __construct(
