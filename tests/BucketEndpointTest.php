@@ -9,7 +9,7 @@ namespace Zing\Flysystem\Tos\Tests;
  */
 final class BucketEndpointTest extends ValidAdapterTest
 {
-    protected function getEndpoint(): string
+    protected function getEndpoint(): string 
     {
         return (string) getenv('TOS_BUCKET_ENDPOINT') ?: \sprintf('%s.%s', $this->getBucket(), parent::getEndpoint());
     }
