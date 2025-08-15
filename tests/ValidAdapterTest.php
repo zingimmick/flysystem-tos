@@ -67,7 +67,7 @@ class ValidAdapterTest extends TestCase
     protected function tearDown(): void
     {
         parent::tearDown();
-
+if($this->tosAdapter)
         $this->tosAdapter->deleteDirectory('fixture');
     }
 
