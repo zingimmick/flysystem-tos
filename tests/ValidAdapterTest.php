@@ -15,7 +15,7 @@ use Zing\Flysystem\Tos\TosAdapter;
 
 class ValidAdapterTest extends TestCase
 {
-    private ?TosAdapter $tosAdapter = null;
+    private TosAdapter $tosAdapter;
 
     private function getKey(): string
     {
