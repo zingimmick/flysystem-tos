@@ -36,34 +36,41 @@ final class TosAdapterTest extends FilesystemAdapterTestCase
         ]);
     }
 
+    private FilesystemAdapter $filesystemAdapter;
+
     protected function setUp(): void
     {
         if ((string) getenv('MOCK') !== 'false') {
             $this->markTestSkipped('Mock tests enabled');
         }
 
+        $this->filesystemAdapter = self::createFilesystemAdapter();
+
         parent::setUp();
+    }
+
+    public function adapter(): FilesystemAdapter
+    {
+        return $this->filesystemAdapter;
     }
 
     protected function tearDown(): void
     {
         parent::tearDown();
-
+if ((string) getenv('MOCK') === 'false') {
         $adapter = $this->adapter();
-        if ($adapter) {
-            $adapter->deleteDirectory('/');
+        $adapter->deleteDirectory('/');
 
-            /** @var \League\Flysystem\StorageAttributes[] $listing */
-            $listing = $adapter->listContents('', false);
+        /** @var \League\Flysystem\StorageAttributes[] $listing */
+        $listing = $adapter->listContents('', false);
 
-            foreach ($listing as $singleListing) {
-                if ($singleListing->isFile()) {
-                    $adapter->delete($singleListing->path());
-                } else {
-                    $adapter->deleteDirectory($singleListing->path());
-                }
+        foreach ($listing as $singleListing) {
+            if ($singleListing->isFile()) {
+                $adapter->delete($singleListing->path());
+            } else {
+                $adapter->deleteDirectory($singleListing->path());
             }
-        }
+        }}
     }
 
     /**
