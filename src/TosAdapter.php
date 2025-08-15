@@ -232,7 +232,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
         try {
             foreach (array_chunk($keys, 1000) as $items) {
                 $input = new DeleteMultiObjectsInput($this->bucket, array_map(
-                    static fn ($key): ObjectTobeDeleted => new ObjectTobeDeleted($key),
+                    static fn (string $key): ObjectTobeDeleted => new ObjectTobeDeleted($key),
                     $items
                 ));
                 $this->tosClient->deleteMultiObjects($input);
@@ -536,7 +536,7 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
      */
     private function processObjects(array $result, array $objects, string $dirname): array
     {
-        $result['objects'] = array_map(static fn ($object): array => [
+        $result['objects'] = array_map(static fn (\Tos\Model\ListedObject $object): array => [
             'prefix' => $dirname,
             'key' => $object->getKey(),
             'last-modified' => $object->getLastModified(),
@@ -556,7 +556,10 @@ class TosAdapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvi
      */
     private function processPrefixes(array $result, array $prefixes): array
     {
-        $result['prefix'] = array_map(static fn ($prefix) => $prefix->getPrefix(), $prefixes);
+        $result['prefix'] = array_map(
+            static fn (\Tos\Model\ListedCommonPrefix $prefix) => $prefix->getPrefix(),
+            $prefixes
+        );
 
         return $result;
     }
