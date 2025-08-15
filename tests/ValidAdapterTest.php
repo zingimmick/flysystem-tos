@@ -15,7 +15,7 @@ use Zing\Flysystem\Tos\TosAdapter;
 
 class ValidAdapterTest extends TestCase
 {
-    private ?TosAdapter $tosAdapter=null;
+    private ?TosAdapter $tosAdapter = null;
 
     private function getKey(): string
     {
@@ -68,7 +68,7 @@ class ValidAdapterTest extends TestCase
     {
         parent::tearDown();
 
-        if ($this->tosAdapter) {
+        if ($this->tosAdapter instanceof TosAdapter) {
             $this->tosAdapter->deleteDirectory('fixture');
         }
     }
