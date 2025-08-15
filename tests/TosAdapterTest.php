@@ -58,17 +58,19 @@ final class TosAdapterTest extends FilesystemAdapterTestCase
     {
         parent::tearDown();
 
-        $adapter = $this->adapter();
-        $adapter->deleteDirectory('/');
+        if ((string) getenv('MOCK') === 'false') {
+            $adapter = $this->adapter();
+            $adapter->deleteDirectory('/');
 
-        /** @var \League\Flysystem\StorageAttributes[] $listing */
-        $listing = $adapter->listContents('', false);
+            /** @var \League\Flysystem\StorageAttributes[] $listing */
+            $listing = $adapter->listContents('', false);
 
-        foreach ($listing as $singleListing) {
-            if ($singleListing->isFile()) {
-                $adapter->delete($singleListing->path());
-            } else {
-                $adapter->deleteDirectory($singleListing->path());
+            foreach ($listing as $singleListing) {
+                if ($singleListing->isFile()) {
+                    $adapter->delete($singleListing->path());
+                } else {
+                    $adapter->deleteDirectory($singleListing->path());
+                }
             }
         }
     }
