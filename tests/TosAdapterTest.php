@@ -7,6 +7,7 @@ namespace Zing\Flysystem\Tos\Tests;
 use League\Flysystem\AdapterTestUtilities\FilesystemAdapterTestCase;
 use League\Flysystem\Config;
 use League\Flysystem\FilesystemAdapter;
+use PHPUnit\Framework\Attributes\Test;
 use Tos\TosClient;
 use Zing\Flysystem\Tos\TosAdapter;
 
@@ -78,6 +79,7 @@ final class TosAdapterTest extends FilesystemAdapterTestCase
     /**
      * @test
      */
+    #[Test]
     public function fetching_unknown_mime_type_of_a_file(): void
     {
         $this->adapter()
